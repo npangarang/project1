@@ -19,73 +19,308 @@ tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
 
 ## Data Wrangling, Exploration, Visualization
 
-### Name and EID here
+### Neel Panging (np22679)
 
 #### Introduction 
 
 Paragraph or two introducing your datasets and variables, why they are interesting to you, etc.
 
-```{R}
-# read your datasets in here, e.g., with read_csv()
+As someone who loves watching movies, I thought it would be interesting to gain insights on how movies are distributed across different streaming platforms (e.g. Netflix, Hulu, Prime Video). Because of this, I found a dataset [movie_platforms] which contains basic information about different movies, as well as which platforms they are streamed on. I'l be merging this dataset with the movie titles in [imdb_ratings], which contains information about the logistics of many different movies (budget, revenue, popularity, etc.) 
 
+movie_platforms:
+https://www.kaggle.com/ruchi798/movies-on-netflix-prime-video-hulu-and-disney 
+imdb_ratings:
+https://www.kaggle.com/deepak525/investigate-tmdb-movie-dataset/data
+
+```{R}
+library(tidyverse)
+
+imdb_ratings <- read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vTkacJKVKsQl6wSSVH-P6PfNfjaFHsfee2TqgisGnjRFz3kI5hBSoi-HXiIFSWJ32YZz1zmrXmhu-K9/pub?gid=1329237387&single=true&output=csv")
+movie_platforms <- read_csv("https://docs.google.com/spreadsheets/d/e/2PACX-1vQ4wIR2WKNke2OdgNLqskftEwxIih2vI-fpm-A2MQJkMi1nbpilY2MGOItEAuN7V0Wi9O0U667CDB9X/pub?gid=506178995&single=true&output=csv")
 ```
 
 #### Tidying: Reshaping
 
-If your datasets are tidy already, demonstrate that you can reshape data with pivot wider/longer here (e.g., untidy and then retidy). Alternatively, it may be easier to wait until the wrangling section so you can reshape your summary statistics. Note here if you are going to do this.
-
-```{R}
-# your tidying code (if applicable; can also wait until wrangling section)
-```
-
+These datasets are already tidy, so we don't have to worry about that for now.
     
 #### Joining/Merging
 
 ```{R}
-# your joining code
+nrow(movie_platforms)
+length(unique(movie_platforms$Title))
+```
+As for the movie_platforms dataset, there are 9515 rows and 9515 unique titles, implying that each row is unique to each movie
 
-# your joining code
+```{R}
+nrow(imdb_ratings) # all titles
+length(unique(imdb_ratings$"original_title")) # unqiue titles
+
+imdb_title_freq <- data.frame(table(imdb_ratings$"original_title"))
+repeats <- imdb_title_freq[imdb_title_freq$Freq > 1,]
+nrow(repeats)
+repeats
+```
+As for imdb_ratings, there seems to be repeated movie titles. This is because there are 10866 rows but 10571 unique titles. This makes sense because there can be multiple movies with the same title! The frequency table above show such such repeated titles. There seems to be 277 of these!
+
+```{R}
+imdb_ratings[imdb_ratings$"original_title" == "Alice in Wonderland",]
+```
+Based on the frequency table, one of the repeated movie titles is "Alice in Wonderland" as shown above. Upon further inspection it looks like there's the popular verion of this movie (directed by Tim Burton), along with two other versions that seem to have lower **popularity** scores, and missing data for **revenue**. It doesn't make too much sense to consider the versions with 0 for **revenue** or **budget**, so maybe we can try removing those movies later.
+
+```{R}
+imdb_ratings_filtered <- imdb_ratings %>%
+  filter(revenue > 0) %>%
+  filter(budget > 0)
+
+imdb_title_freq <- data.frame(table(imdb_ratings_filtered$"original_title"))
+repeats <- imdb_title_freq[imdb_title_freq$Freq > 1,]
+nrow(repeats)
+repeats
+
+imdb_ratings_filtered[imdb_ratings_filtered$"original_title" == "A Nightmare on Elm Street",]
+```
+We're now down to only 47 repeated movie titles in the frequency table, not bad! If we take a look at a Nightmare on Elm Street, it looks like there are two valid versions of this film, both with considerable **popularity**, **budget**, and **revenue**. We will repeat this process after merging our datasets
+
+```{R}
+merged <- imdb_ratings %>%
+  left_join(movie_platforms, by = c("original_title" = "Title"))
+head(merged)
 ```
 
 Discussions of joining here. Feel encouraged to break up into more than once code chunk and discuss each in turn.
 
-####  Wrangling
+I've merged these datasets by movie titles and decided to do an left_join imdb_ratings with movie_platforms to keep the movies with the same titles from imdb_ratings. This will result in movies with repeated titles being merged with information for the same unique title in movie_platforms. We will account for this during data wrangling. 
 
 ```{R}
-# your wrangling code
-
-# your wrangling code
-
-# your wrangling code
+num_rows <- nrow(merged)
+num_rows
+nrow(imdb_ratings) - num_rows
+nrow(movie_platforms) - num_rows
 ```
 
-Your discussion of wrangling section here. Feel encouraged to break up into more than once code chunk and discuss each in turn.
+After merging, it looks like our merged dataset has 10866 rows. Since we left joined from imdb_ratings, we currently have the same number of rows that imdb_ratings has, and 1351 more rows than movie_platforms. We are now ready to wrangle.
 
+####  Wrangling
 
+There are a lot of variables in our dataset now, so let's only consider some of these for the purposes of this project. The variables of interest are noted in the *interested_cols* variable.
+```{R}
+colnames(merged)
+interested_cols <- c("original_title", "Year", "Netflix", "Hulu", "Prime Video", "Type", "Country", "Genres", "Language", "Runtime", "revenue", "Directors", "budget", "IMDb", "Rotten Tomatoes")
+merged <- merged %>%
+  select(interested_cols)
+head(merged)
+```
+
+Now let's do some more wrangling. Here we rename the columns and filter out the films that aren't on Netflix, Hulu, or Prime Video. We also filtered out the films with 0 revenue/budget, which I'm assuming are films that are not as popular. This might help get rid of some of those duplicate films.
+
+```{R}
+# Renaming columns for easier referencing
+oldnames = c("original_title","Prime Video", "Rotten Tomatoes")
+newnames = c("title","prime", "rotten_tomatoes")
+temp <- merged %>% 
+  rename_at(vars(oldnames), ~ newnames) %>%
+  rename_all(tolower) %>%
+  # Filtering by movies either on Netflix, Hulu, or Prime
+  mutate(x = netflix + hulu + prime) %>%
+  drop_na(x) %>%
+  filter(x > 0) %>%
+  select(-c(x)) %>%
+  filter(revenue > 0, budget > 0)
+head(temp)
+```
+Using the frequency table method as shown earlier for repeated movie titles, we see that we now only have 11 repeated titles, but our dataset has been getting considerably smaller after our wrangling (699 rows).
+
+```{R}
+merged_freq <- data.frame(table(temp$title))
+repeats <- merged_freq[merged_freq$Freq > 1,]
+nrow(repeats)
+repeats
+temp[temp$title == "The Karate Kid",]
+```
+
+To take care of the rest of these repeated titles, we are making the assumption that the Netflix/Hulu/Prime film among the duplicated films in the dataset is the film with the greatest revenue (i.e. greatest popularity). By following this assumption, we see that we now have unique movie titles in the dataset. Now let's take care of some other wrangling.
+
+```{R}
+temp <- temp %>% 
+     group_by(title) %>%
+     filter(revenue == max(revenue)) %>%
+     distinct(title, .keep_all = TRUE)
+nrow(temp) - length(unique(temp$title))
+```
+Here I have written a function to return the number of instances for each of the categorical variables. This function is used to engineer some new numerical variables from our existing categorical ones. Also, the rating variables were parsed to be numeric.
+
+```{R}
+# Function to count values for our non-numeric columns
+count_elements <- function(x) {
+  length(unlist(str_split(x, ",")))
+}
+
+# Parsing ratings
+temp <- temp %>%
+  separate(imdb, c("imdb", "x"), sep = "/") %>%
+  separate(rotten_tomatoes, c("rotten_tomatoes", "x"), sep = "/") %>%
+  select(-c(x)) %>%
+# Engineering numeric 'count' variables from our categorical variables
+  mutate(ncountry = count_elements(country)) %>%
+  mutate(ngenres = count_elements(genres)) %>%
+  mutate(nlanguage = count_elements(language)) %>%
+  mutate(ndirectors = count_elements(directors))
+
+```
+
+### Summary Statistics
+
+The following are summary statistics for the numerical variables in the dataset
+
+```{R}
+df <- temp %>% ungroup()
+df_num <- df %>%
+  select(where(is.numeric)) %>%
+  drop_na %>%
+  summarize_all(funs(min = min, 
+                      q25 = quantile(., 0.25), 
+                      median = median, 
+                      q75 = quantile(., 0.75), 
+                      max = max,
+                      mean = mean, 
+                      sd = sd,
+                      count = n(),
+                      distinct = n_distinct))
+
+# use of gather/spread
+# use of gt styling
+library(gt)
+df_num_stats <- df_num %>% gather(stat, val) %>%
+  separate(stat, c("var", "stat"), sep = "_") %>%
+  spread(stat, val) %>%
+  select(var, min, q25, median, q75, max, mean, sd, count, distinct) %>%
+  gt() %>%
+  data_color (
+     columns = vars(max),
+     colors = scales::col_numeric(
+         palette = c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab"),
+         domain = NULL))
+df_num_stats
+```
+The following is the frequency distribution for the categorical variables
+
+```{R}
+# Country
+df %>%
+  group_by(country) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n)) %>%
+  arrange(desc(n))
+
+df %>%
+  group_by(genres) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n)) %>%
+  arrange(desc(n))
+
+df %>%
+  group_by(language) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n)) %>%
+  arrange(desc(n))
+
+df %>%
+  group_by(directors) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n)) %>%
+  arrange(desc(n))
+```
+
+The following is the number of missing values for each variable
+```{R}
+df %>%
+  summarise_all(funs(sum(is.na(.))))
+```
+
+Now let's do some other miscelleanous analyses. Firstly, it seems that films that are on Netflix have typically had higher revenue on average than films on Hulu or Prime video. 
+
+```{R}
+df %>%
+  group_by(netflix, hulu, prime) %>%
+  summarize(mean_revenue = mean(revenue)) %>%
+  arrange(desc(mean_revenue))
+```
+Let's look at how Steven Spielberg's movies are distributed
+
+```{R}
+df %>%
+  filter(str_detect(directors, "Spielberg")) %>%
+  select(title, year, netflix, hulu, prime, revenue, budget, imdb, rotten_tomatoes, ndirectors) %>%
+  arrange(desc(revenue))
+```
+
+Now let's compute the difference between the highest and lowest rated movie on Netflix for each given year.
+
+```{R}
+# Custom range statistic function
+range <- function(x) {
+  max(x) - min(x)
+}
+
+df %>%
+  group_by(netflix, year) %>%
+  mutate(rotten_tomatoes = as.numeric(rotten_tomatoes)) %>%
+  filter(netflix == 1) %>%
+  summarize(rotten_tomatoes_range = range(rotten_tomatoes)) %>%
+  arrange(desc(rotten_tomatoes_range))
+  
+```
 #### Visualizing
 
 ```{R}
-# your plot 1
+library(ggplot2)
+myColors <- c("#56ddc5", "#ff3db7", "#4699dd")
+df %>%
+  mutate(num_platforms = netflix + hulu + prime) %>%
+  ggplot(aes(x=budget, y = revenue, color = as.factor(num_platforms))) +
+  scale_colour_brewer(type = "seq", palette = "Spectral") + 
+    geom_point() +
+    geom_smooth(method='lm') +
+    xlab("Movie Budget ($)") +
+    ylab("Movie Revenue ($)") +
+    ggtitle("Movie budget versus revenue") +
+    labs(color = "# of streaming platforms") +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 10))
 ```
-
-Your discussion of plot 1
+As shown in the plot above, there is a relatively linear correlation between movie budget and movie revenue. This makes sense because higher budget films can afford to pay higher profile actors and staff, which could totally affect how many people would pay to watch such a movie. Also, the data points are colored by # of streaming platforms (i.e. the number of streaming platforms that the movie appears on out of Netflix, Hulu, and Amazon). I definitely expected more of the high budget/high revenue films to be on multiple streaming platforms, but most of these films were still on 1 streaming platform.
 
 ```{R}
-# your plot 2
+df %>% 
+  mutate(rotten_tomatoes = as.numeric(rotten_tomatoes)) %>%
+  mutate(rotten_tomatoes_cat = cut(rotten_tomatoes, breaks = quantile(rotten_tomatoes, probs = seq(0, 1, 0.2)))) %>%
+  ggplot(aes(x=rotten_tomatoes_cat, y=runtime, fill=rotten_tomatoes_cat)) + 
+    geom_violin() +
+    theme_grey() +
+    geom_boxplot(width=.2)+
+    xlab("Rotten Tomato Scores (# Range)") +
+    ylab("Movie runtime (minutes)") +
+    ggtitle("Rotten Tomato Scores versus Runtime") +
+    labs(color = "Rotten Tomato Scores") +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 20))
 ```
-
-Your discussion of plot 2
+The plot above is a box-plot overlayed with a violin plot of movie run times across different Rotten Tomato score ranges. I did this by creating the categorical variable **rotten_tomatoes_cat** by binning **rotten_tomatoes** into 5 bins. As shown in the plot, it seems that the median runtimes of the movies seem to be greater for the more highly rated movies. In fact, it looks like the first quartile for the run time of the highest Rotten Tomato Score category seems to be around than the median run time of the other score categories. Maybe longer runtimes give movies more time to show how good they are! 
 
 ```{R}
-# your plot 3
+df %>% 
+  mutate(across(c(netflix), factor)) %>%
+  ggplot(aes(x =ngenres, y = revenue, fill = netflix)) +
+  theme_dark() +
+  geom_bar(stat="summary", position="dodge") +
+  geom_errorbar(stat="summary",position="dodge") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 20)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 20)) +
+  xlab("Number of genres (#)") +
+  ylab("Movie revenue ($)") +
+  ggtitle("Number of genres versus revenue") +
+  labs(color = "On Netflix")
+  
 ```
-
-Your discussion of plot 3
-
-#### Concluding Remarks
-
-If any!
-
+The plot above is a stacked barplot with error bars that shows the distribution of the revenue for movies across the number of genres that those movies encapsulate. This barplot is also colored by whether or not these films are on Netflix. Based on the plot, it seems that there is a sweet spot for the number of genres that the highest revenue-producing movies typically have (around 6). Furthermore, the movies that are on Netflix consistently bring higher revenues across the different number of present genres apart from movies that contain around 6 genres (aka the sweet spot).
 
 
 
